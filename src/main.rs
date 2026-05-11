@@ -1,3 +1,234 @@
-fn main() {
-    println!("Hello, world!");
+mod cache;
+use std::fmt::format;
+
+use color_eyre::Result;
+use crossterm::event::{self, KeyCode, KeyEventKind};
+use ratatui::layout::{Constraint, Layout, Position};
+use ratatui::style::{Color, Modifier, Style, Stylize};
+use ratatui::text::{Line, Span, Text};
+use ratatui::widgets::{Block, List, ListItem, Paragraph};
+use ratatui::{DefaultTerminal, Frame};
+
+use crate::cache::Cache;
+
+fn main() -> Result<()> {
+    color_eyre::install()?;
+    ratatui::run(|terminal| App::new().run(terminal))
+}
+
+#[derive(Debug)]
+enum InputMode {
+    Normal,
+    Editing,
+}
+
+#[derive(Debug)]
+pub struct App {
+    db: Cache,
+    cmd: String,
+    character_index: usize,
+    exit: bool,
+    input_mode: InputMode,
+    messages: Vec<String>,
+}
+
+impl App {
+    fn new() -> Self {
+        let db = Cache::new();
+        Self {
+            cmd: String::new(),
+            db: db,
+            character_index: 0,
+            exit: false,
+            input_mode: InputMode::Editing,
+            messages: Vec::new(),
+        }
+    }
+
+    pub fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
+        loop {
+            terminal.draw(|frame| self.render(frame))?;
+
+            if let Some(key) = event::read()?.as_key_press_event() {
+                match self.input_mode {
+                    InputMode::Normal => match key.code {
+                        KeyCode::Char('e') => {
+                            self.input_mode = InputMode::Editing;
+                        }
+                        KeyCode::Char('q') => {
+                            return Ok(());
+                        }
+                        _ => {}
+                    },
+                    InputMode::Editing if key.kind == KeyEventKind::Press => match key.code {
+                        KeyCode::Enter => self.submit_cmd(),
+                        KeyCode::Char(to_insert) => self.enter_char(to_insert),
+                        KeyCode::Backspace => self.delete_char(),
+                        KeyCode::Left => self.move_cursor_left(),
+                        KeyCode::Right => self.move_cursor_right(),
+                        KeyCode::Esc => self.input_mode = InputMode::Normal,
+                        _ => {}
+                    },
+                    InputMode::Editing => {}
+                }
+            }
+        }
+    }
+
+    fn submit_cmd(&mut self) {
+        let mut cmd = self.cmd.clone();
+        let kv = cmd.split_off(5);
+        match cmd.as_str() {
+            "/ins " => {
+                let (key, val) = kv.split_once(" ").unwrap();
+                self.db.insert(key.to_string(), val.to_owned().into_bytes());
+                self.messages.push(format!("{} added into db.", key));
+            }
+            "/del " => {
+                self.db.delete(&kv.to_string());
+                self.messages.push(format!("{} removed from db.", kv));
+            }
+            "/get " => {
+                let item = self.db.get(&kv.to_string());
+                if let Some(val) = item {
+                    let string = String::from_utf8(val).unwrap();
+                    self.messages.push(string);
+                } else {
+                    self.messages.push(format!("{} not found from db.", kv));
+                }
+            }
+            _ => {
+                self.messages.push(String::from("Invalid cmd"));
+            }
+        }
+
+        self.cmd.clear();
+        self.reset_cursor();
+    }
+
+    fn delete_char(&mut self) {
+        let is_not_cursor_leftmost = self.character_index != 0;
+        if is_not_cursor_leftmost {
+            // Method "remove" is not used on the saved text for deleting the selected char.
+            // Reason: Using remove on String works on bytes instead of the chars.
+            // Using remove would require special care because of char boundaries.
+
+            let current_index = self.character_index;
+            let from_left_to_current_index = current_index - 1;
+
+            // Getting all characters before the selected character.
+            let before_char_to_delete = self.cmd.chars().take(from_left_to_current_index);
+            // Getting all characters after selected character.
+            let after_char_to_delete = self.cmd.chars().skip(current_index);
+
+            // Put all characters together except the selected one.
+            // By leaving the selected one out, it is forgotten and therefore deleted.
+            self.cmd = before_char_to_delete.chain(after_char_to_delete).collect();
+            self.move_cursor_left();
+        }
+    }
+    fn move_cursor_left(&mut self) {
+        let cursor_moved_left = self.character_index.saturating_sub(1);
+        self.character_index = self.clamp_cursor(cursor_moved_left);
+    }
+
+    fn move_cursor_right(&mut self) {
+        let cursor_moved_right = self.character_index.saturating_add(1);
+        self.character_index = self.clamp_cursor(cursor_moved_right);
+    }
+
+    fn enter_char(&mut self, new_char: char) {
+        let index = self.byte_index();
+        self.cmd.insert(index, new_char);
+        self.move_cursor_right();
+    }
+
+    fn byte_index(&self) -> usize {
+        self.cmd
+            .char_indices()
+            .map(|(i, _)| i)
+            .nth(self.character_index)
+            .unwrap_or(self.cmd.len())
+    }
+
+    fn clamp_cursor(&self, new_cursor_pos: usize) -> usize {
+        new_cursor_pos.clamp(0, self.cmd.chars().count())
+    }
+
+    const fn reset_cursor(&mut self) {
+        self.character_index = 0;
+    }
+    fn render(&self, frame: &mut Frame) {
+        let layout = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Length(3),
+            Constraint::Min(1),
+        ]);
+        let [help_area, input_area, messages_area] = frame.area().layout(&layout);
+
+        let (msg, style) = match self.input_mode {
+            InputMode::Normal => (
+                vec![
+                    "Press ".into(),
+                    "q".bold(),
+                    " to exit, ".into(),
+                    "e".bold(),
+                    " to start editing.".bold(),
+                ],
+                Style::default().add_modifier(Modifier::RAPID_BLINK),
+            ),
+            InputMode::Editing => (
+                vec![
+                    "Press ".into(),
+                    "Esc".bold(),
+                    " to stop editing, ".into(),
+                    "Enter".bold(),
+                    " to record the message".into(),
+                ],
+                Style::default(),
+            ),
+        };
+        let text = Text::from(Line::from(msg)).patch_style(style);
+        let help_message = Paragraph::new(text);
+        frame.render_widget(help_message, help_area);
+
+        let input = Paragraph::new(self.cmd.as_str())
+            .style(match self.input_mode {
+                InputMode::Normal => Style::default(),
+                InputMode::Editing => Style::default().fg(Color::Yellow),
+            })
+            .block(Block::bordered().title("Input"));
+        frame.render_widget(input, input_area);
+        match self.input_mode {
+            // Hide the cursor. `Frame` does this by default, so we don't need to do anything here
+            InputMode::Normal => {}
+
+            // Make the cursor visible and ask ratatui to put it at the specified coordinates after
+            // rendering
+            #[expect(clippy::cast_possible_truncation)]
+            InputMode::Editing => frame.set_cursor_position(Position::new(
+                // Draw the cursor at the current position in the input field.
+                // This position can be controlled via the left and right arrow key
+                input_area.x + self.character_index as u16 + 1,
+                // Move one line down, from the border to the input line
+                input_area.y + 1,
+            )),
+        }
+
+        let messages: Vec<ListItem> = self
+            .messages
+            .iter()
+            .enumerate()
+            .map(|(i, m)| {
+                let content = Line::from(Span::raw(format!("{i}: {m}")));
+                ListItem::new(content)
+            })
+            .collect();
+        let messages = List::new(messages).block(Block::bordered().title("Messages"));
+        frame.render_widget(messages, messages_area);
+    }
+
+    fn exit(&mut self) {
+        self.exit = true;
+    }
 }

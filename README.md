@@ -47,5 +47,4 @@ main reason is i want to actually learn how databases work internally instead of
 
 will keep adding useful stuff here while building.
 
-
 - TBD
