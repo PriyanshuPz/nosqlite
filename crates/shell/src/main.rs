@@ -1,6 +1,7 @@
 use color_eyre::Result;
 use crossterm::event::{self, KeyCode, KeyEventKind};
 use nosqlite::Database;
+use nosqlite::document::processor::parse_document;
 use ratatui::layout::{Constraint, Layout, Position};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
@@ -68,21 +69,23 @@ impl App {
 
     fn submit_cmd(&mut self) {
         let mut cmd = self.cmd.clone();
-        let kv = cmd.split_off(5);
+        let kv = cmd.split_off(4);
         match cmd.as_str() {
-            "/ins " => {
+            "set " => {
                 let (key, val) = kv.split_once(" ").unwrap();
-                let _ = self.db.set(key.to_string(), val.to_owned());
+
+                let doc = parse_document(val).unwrap();
+                let _ = self.db.set(key.to_string(), doc);
                 self.messages.push(format!("{} added into db.", key));
             }
-            "/del " => {
+            "del " => {
                 let _ = self.db.delete(&kv.to_string());
                 self.messages.push(format!("{} removed from db.", kv));
             }
-            "/get " => {
+            "get " => {
                 let item = self.db.get(&kv.to_string());
                 if let Some(val) = item {
-                    self.messages.push(val.to_owned());
+                    self.messages.push(val.to_owned().to_string());
                 } else {
                     self.messages.push(format!("{} not found from db.", kv));
                 }
