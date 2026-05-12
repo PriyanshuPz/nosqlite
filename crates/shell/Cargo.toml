@@ -1,0 +1,10 @@
+[package]
+name = "nosqlite-shell"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+nosqlite = { path = "../engine" }
+color-eyre = "0.6.3"
+crossterm = "0.29.0"
+ratatui = "0.30.0"

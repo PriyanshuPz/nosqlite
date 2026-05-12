@@ -47,6 +47,7 @@ main reason is i want to actually learn how databases work internally instead of
 
 will keep adding useful stuff here while building.
 
+- [SQLite Database System Design and Implementation Book by Sibsankar Haldar](https://books.google.co.in/books?id=OEJ1CQAAQBAJ)
 - https://ratatui.rs/recipes/apps
 - https://bsonspec.org/spec.html
 - https://doc.rust-lang.org/book/ch16-03-shared-state.html

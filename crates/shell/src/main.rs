@@ -1,45 +1,37 @@
-mod cache;
-use std::fmt::format;
-
 use color_eyre::Result;
 use crossterm::event::{self, KeyCode, KeyEventKind};
+use nosqlite::Database;
 use ratatui::layout::{Constraint, Layout, Position};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, List, ListItem, Paragraph};
 use ratatui::{DefaultTerminal, Frame};
 
-use crate::cache::Cache;
-
 fn main() -> Result<()> {
     color_eyre::install()?;
     ratatui::run(|terminal| App::new().run(terminal))
 }
 
-#[derive(Debug)]
 enum InputMode {
     Normal,
     Editing,
 }
 
-#[derive(Debug)]
 pub struct App {
-    db: Cache,
+    db: Database,
     cmd: String,
     character_index: usize,
-    exit: bool,
     input_mode: InputMode,
     messages: Vec<String>,
 }
 
 impl App {
     fn new() -> Self {
-        let db = Cache::new();
+        let db = Database::open("shell_db.nql").unwrap();
         Self {
             cmd: String::new(),
             db: db,
             character_index: 0,
-            exit: false,
             input_mode: InputMode::Editing,
             messages: Vec::new(),
         }
@@ -48,7 +40,6 @@ impl App {
     pub fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         loop {
             terminal.draw(|frame| self.render(frame))?;
-
             if let Some(key) = event::read()?.as_key_press_event() {
                 match self.input_mode {
                     InputMode::Normal => match key.code {
@@ -81,18 +72,17 @@ impl App {
         match cmd.as_str() {
             "/ins " => {
                 let (key, val) = kv.split_once(" ").unwrap();
-                self.db.insert(key.to_string(), val.to_owned().into_bytes());
+                let _ = self.db.set(key.to_string(), val.to_owned());
                 self.messages.push(format!("{} added into db.", key));
             }
             "/del " => {
-                self.db.delete(&kv.to_string());
+                let _ = self.db.delete(&kv.to_string());
                 self.messages.push(format!("{} removed from db.", kv));
             }
             "/get " => {
                 let item = self.db.get(&kv.to_string());
                 if let Some(val) = item {
-                    let string = String::from_utf8(val).unwrap();
-                    self.messages.push(string);
+                    self.messages.push(val.to_owned());
                 } else {
                     self.messages.push(format!("{} not found from db.", kv));
                 }
@@ -203,8 +193,7 @@ impl App {
             // Hide the cursor. `Frame` does this by default, so we don't need to do anything here
             InputMode::Normal => {}
 
-            // Make the cursor visible and ask ratatui to put it at the specified coordinates after
-            // rendering
+            // Make the cursor visible and ask ratatui to put it at the specified coordinates after rendering
             #[expect(clippy::cast_possible_truncation)]
             InputMode::Editing => frame.set_cursor_position(Position::new(
                 // Draw the cursor at the current position in the input field.
@@ -226,9 +215,5 @@ impl App {
             .collect();
         let messages = List::new(messages).block(Block::bordered().title("Messages"));
         frame.render_widget(messages, messages_area);
-    }
-
-    fn exit(&mut self) {
-        self.exit = true;
     }
 }
