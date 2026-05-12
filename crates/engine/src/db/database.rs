@@ -14,11 +14,10 @@ pub struct Database {
 impl Database {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let mut pager = Pager::open(path)?;
-
-        let page = pager.read_page(0)?;
+        let meta = pager.check_metadata()?;
+        let page = pager.read_page(meta.root_page)?;
 
         let storage = Self::deserialize(&page.data);
-
         Ok(Self { pager, storage })
     }
 
@@ -39,7 +38,7 @@ impl Database {
     }
 
     fn persist(&mut self) -> Result<()> {
-        let mut page = Page::new(0);
+        let mut page = Page::new(1);
 
         let bytes = Self::serialize(&self.storage);
 

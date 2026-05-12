@@ -23,22 +23,11 @@ not trying to make next mongodb or some distributed cloud thing.
 ## AI disclosure
 
 for this project i am not using any in editor AI tools or autocomplete AI.
-
 no copilot.
-no cursor tab.
 no AI code generation inside editor.
-
 using zed editor normally and writing code manually.
 
-AI tools like ChatGPT or Google Gemini can still be used sometimes for:
-- theory
-- explanations
-- debugging help
-- learning concepts
-- architecture understanding
-- searching things
-
-but actual implementation code is written manually.
+AI tools like ChatGPT or Google Gemini can still be used sometimes for theory, explanations, debugging help, searching things
 
 main reason is i want to actually learn how databases work internally instead of vibe coding random storage engine.
 
