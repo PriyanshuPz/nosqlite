@@ -5,6 +5,6 @@ edition = "2024"
 
 [dependencies]
 nosqlite = { path = "../engine" }
-color-eyre = "0.6.3"
-crossterm = "0.29.0"
-ratatui = "0.30.0"
+anyhow = "1.0.102"
+clap = "4.6.1"
+tokio = { version = "1.43.0", features = ["full"] }
