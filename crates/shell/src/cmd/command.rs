@@ -1,17 +1,28 @@
-use anyhow::anyhow;
+use anyhow::Ok;
 
 use crate::errors::Error;
 
 #[derive(Clone, Debug)]
 pub enum Command {
     Exit,
-    Echo(String),
-    Ls,
-    Pwd,
-    Cd(String),
-    Touch(String),
-    Rm(String),
-    Cat(String),
+    Clear,
+    CreateCollection(String),
+    Error(&'static str),
+}
+
+fn create_collection_subcommand(args: Vec<&str>) -> Result<Command, Error> {
+    let vars: Vec<&str> = vec!["COLLECTION", "collection", "Collection"];
+
+    if args.len() < 3 {
+        return Ok(Command::Error("CREATE: provide collection name"));
+    }
+
+    if !vars.contains(&args[1]) {
+        return Ok(Command::Error("CREATE: Invalid command"));
+    }
+
+    let collection_name = args[2].trim().to_lowercase();
+    Ok(Command::CreateCollection(collection_name))
 }
 
 impl TryFrom<&str> for Command {
@@ -21,45 +32,11 @@ impl TryFrom<&str> for Command {
         let split_value: Vec<&str> = value.split_whitespace().collect();
         match split_value[0] {
             "exit" => Ok(Command::Exit),
-            "ls" => Ok(Command::Ls),
-            "echo" => {
-                if split_value.len() < 2 {
-                    Err(anyhow!("echo command requires an argument"))
-                } else {
-                    Ok(Command::Echo(split_value[1..].join(" ")))
-                }
-            }
-            "pwd" => Ok(Command::Pwd),
-            "cd" => {
-                if split_value.len() < 2 {
-                    Err(anyhow!("cd command requires an argument"))
-                } else {
-                    Ok(Command::Cd(split_value[1..].join(" ")))
-                }
-            }
-            "touch" => {
-                if split_value.len() < 2 {
-                    Err(anyhow!("touch command requires an argument"))
-                } else {
-                    Ok(Command::Touch(split_value[1..].join(" ")))
-                }
-            }
-            "rm" => {
-                if split_value.len() < 2 {
-                    Err(anyhow!("rm command requires an argument"))
-                } else {
-                    Ok(Command::Rm(split_value[1..].join(" ")))
-                }
-            }
-            "cat" => {
-                println!("{}", split_value[1..].join(" "));
-                if split_value.len() < 2 {
-                    Err(anyhow!("cat command requires an argument"))
-                } else {
-                    Ok(Command::Cat(split_value[1..].join(" ")))
-                }
-            }
-            _ => Err(anyhow!("Unknown command")),
+            "clear" => Ok(Command::Clear),
+            "create" => create_collection_subcommand(split_value),
+            "CREATE" => create_collection_subcommand(split_value),
+            "Create" => create_collection_subcommand(split_value),
+            _ => Ok(Command::Error("Unknown command")),
         }
     }
 }

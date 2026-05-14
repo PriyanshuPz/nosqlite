@@ -1,57 +1,77 @@
+use std::{env, fs};
+
 use nosqlite_shell::{cmd::command::Command, errors::CrateResult};
-use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt},
-    task::JoinHandle,
-};
-pub fn pwd() -> CrateResult<String> {
-    let current_dir = std::env::current_dir()?;
-    Ok(current_dir.display().to_string())
-}
-fn spawn_user_input_handler() -> JoinHandle<CrateResult<()>> {
-    tokio::spawn(async {
-        let stdin = tokio::io::stdin();
-        let stdout = tokio::io::stdout();
+use rustyline::{DefaultEditor, error::ReadlineError};
 
-        let mut reader = tokio::io::BufReader::new(stdin).lines();
-        let mut stdout = tokio::io::BufWriter::new(stdout);
-        stdout.write(b"Welcome to the nosqlite shell!\n").await?;
+fn main() -> CrateResult<()> {
+    let mut rl = DefaultEditor::new()?;
+    let temp_dir = env::temp_dir();
+    let history_path = &temp_dir.join(".nosqlite_history").to_path_buf();
 
-        stdout.write(b"\nnosqlite > ").await?;
-        stdout.flush().await?;
+    println!(
+        r"
+▄▄  ▄▄  ▄▄▄   ▄▄▄▄  ▄▄▄  ▄▄    ▄▄ ▄▄▄▄▄▄ ▄▄▄▄▄
+███▄██ ██▀██ ███▄▄ ██▀██ ██    ██   ██   ██▄▄
+██ ▀██ ▀███▀ ▄▄██▀ ▀███▀ ██▄▄▄ ██   ██   ██▄▄▄
+▀▀
+"
+    );
+    println!(" Welcome to nosqlite! Type 'exit' to quit.\n");
+    match rl.load_history(history_path) {
+        Ok(_) => {}
+        Err(ReadlineError::Io(_)) => {
+            fs::File::create(history_path)?;
+        }
+        Err(err) => {
+            eprintln!("nosqlite: Error loading history: {}", err);
+        }
+    }
 
-        while let Ok(Some(line)) = reader.next_line().await {
-            let command = handle_new_line(&line).await;
-            if let Ok(command) = &command {
-                match command {
-                    _ => {}
+    loop {
+        let line = rl.readline("nosqlite > ");
+        match line {
+            Ok(line) => {
+                let input = line.trim();
+
+                if input.is_empty() {
+                    continue;
                 }
-            } else {
-                eprintln!("Error parsing command: {}", command.err().unwrap());
+
+                rl.add_history_entry(input)?;
+
+                let command: Command = input
+                    .try_into()
+                    .unwrap_or(Command::Error("Invalid Command"));
+
+                match command {
+                    Command::Clear => {
+                        let _ = rl.clear_screen();
+                    }
+                    Command::Exit => {
+                        eprintln!("Exiting nosqlite...");
+                        rl.save_history(history_path)?;
+                        break;
+                    }
+                    Command::CreateCollection(name) => {
+                        println!("Collection {name} created sucessfully.")
+                    }
+                    Command::Error(e) => {
+                        eprintln!("nosqlite error: {:?}", e);
+                    }
+                }
             }
-
-            stdout.write(b"\nnosqlite > ").await?;
-            stdout.flush().await?;
+            Err(ReadlineError::Interrupted) | Err(ReadlineError::Eof) => {
+                // Handle Ctrl-C or Ctrl-D gracefully
+                println!("\nExiting nosqlite...");
+                break;
+            }
+            Err(e) => {
+                eprintln!("nosqlite error: {:?}", e);
+            }
         }
-        Ok(())
-    })
-}
-
-async fn handle_new_line(line: &str) -> CrateResult<Command> {
-    let command: Command = line.try_into()?;
-    match command.clone() {
-        Command::Echo(s) => {
-            println!("{}", s);
-        }
-        _ => {}
     }
-    Ok(command)
-}
 
-#[tokio::main]
-async fn main() {
-    let user_input_handler = spawn_user_input_handler().await;
+    rl.save_history(history_path)?;
 
-    if let Ok(Err(e)) = user_input_handler {
-        eprintln!("Error: {}", e);
-    }
+    Ok(())
 }

@@ -36,6 +36,9 @@ main reason is i want to actually learn how databases work internally instead of
 
 will keep adding useful stuff here while building.
 
+- https://rust.code-maven.com/rust-programming/rust/stdin/rust-hello-name.html
+- https://www.mongodb.com/docs/mongodb-shell/crud/
+- https://en.wikipedia.org/wiki/8-bit_computing
 - https://donsnotes.com/tech/charsets/ascii.html
 - https://bsonspec.org/spec.html
 - [SQLite Database System Design and Implementation Book by Sibsankar Haldar](https://books.google.co.in/books?id=OEJ1CQAAQBAJ)
