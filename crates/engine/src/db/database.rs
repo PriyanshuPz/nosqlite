@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
+use std::str::from_utf8_unchecked;
 
 use anyhow::Result;
 use bson::Document;
@@ -10,14 +11,32 @@ use crate::pager::pager::Pager;
 pub struct Database {
     pager: Pager,
     storage: HashMap<String, Document>,
+    collections: HashMap<String, u64>,
+    collection_root_page_id: u64,
 }
 
 impl Database {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let mut pager = Pager::open(path)?;
         let meta = pager.check_metadata()?;
+        let mut collections = HashMap::new();
         let page = pager.read_page(meta.root_page)?;
         let storage = Self::deserialize(&page.data);
+
+        if meta.root_page == 1 {
+            let mut root_page = Page::new(1);
+            root_page.data[0..4].copy_from_slice(&0u32.to_be_bytes());
+            root_page.data[4..12].copy_from_slice(&0u64.to_be_bytes());
+            pager.write_page(&root_page)?;
+
+            return Ok(Self {
+                pager,
+                storage: storage,
+                collections,
+                collection_root_page_id: 1,
+            });
+        }
+
         Ok(Self { pager, storage })
     }
 
@@ -35,6 +54,35 @@ impl Database {
         self.storage.remove(key);
 
         self.persist()
+    }
+
+    fn find_collections(&mut self, root: u64) -> Result<()> {
+        let mut cursor = 0;
+
+        // let mut map = HashMap::new();
+        let page = self.pager.read_page(root)?;
+        let num_collections = page.data[0];
+        cursor += 1;
+        // TODO! implement this extension
+        // let next_page = page.data[1];
+        if num_collections == 0 {
+            return Ok(());
+        }
+
+        let mut names = Vec::new();
+        let mut name = Vec::new();
+        while cursor <= page.data.len() {
+            let bit = page.data[cursor];
+            if bit == 0 {
+                names.push(String::from_utf8(name.clone())?);
+                name.clear();
+            }
+
+            name.extend_from_slice(&(page.data[cursor]).to_le_bytes());
+            cursor += 1;
+        }
+
+        Ok(())
     }
 
     fn persist(&mut self) -> Result<()> {

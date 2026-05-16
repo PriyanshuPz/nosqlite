@@ -1,12 +1,21 @@
 use std::{env, fs};
 
+use nosqlite::Database;
 use nosqlite_shell::{cmd::command::Command, errors::CrateResult};
 use rustyline::{DefaultEditor, error::ReadlineError};
 
 fn main() -> CrateResult<()> {
+    let args: Vec<String> = std::env::args().collect();
+    let mut db_path = &"nosqlite.db".to_string();
+    if args.len() > 2 {
+        db_path = &args[1];
+    }
+
     let mut rl = DefaultEditor::new()?;
     let temp_dir = env::temp_dir();
     let history_path = &temp_dir.join(".nosqlite_history").to_path_buf();
+
+    let _ = Database::open(db_path);
 
     println!(
         r"
