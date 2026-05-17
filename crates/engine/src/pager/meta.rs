@@ -7,7 +7,7 @@ use std::{
 use crate::pager::page::{PAGE_SIZE, Page};
 
 pub const MAGIC_STR: &'static [u8; 15] = b"NOSQLITE FORMAT";
-pub const ROOT_PAGE: u32 = 1;
+pub const ROOT_PAGE: u8 = 1;
 
 pub struct Metadata {
     pub version: u8,
@@ -22,8 +22,8 @@ pub fn write_metadata(file: &mut File) -> Result<()> {
     cursor += MAGIC_STR.len();
     cursor += 1;
     page.data[cursor..cursor + 1].copy_from_slice(&[1]);
-    cursor += 2;
-    page.data[cursor..cursor + 4].copy_from_slice(&ROOT_PAGE.to_le_bytes());
+    cursor += 1;
+    page.data[cursor..cursor + 1].copy_from_slice(&ROOT_PAGE.to_le_bytes());
     let offset = page.id * PAGE_SIZE as u64;
     file.seek(SeekFrom::Start(offset))?;
     file.write_all(&page.data)?;
@@ -43,7 +43,6 @@ pub fn read_metadata(file: &mut File) -> Result<Metadata> {
     }
 
     let version = u8::from_le_bytes([buffer[16]]);
-    let root_page = u32::from_le_bytes([buffer[19], buffer[20], buffer[21], buffer[22]]) as u64;
-
+    let root_page = u8::from_le_bytes([buffer[17]]) as u64;
     Ok(Metadata { version, root_page })
 }

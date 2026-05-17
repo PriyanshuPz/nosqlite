@@ -7,22 +7,40 @@ pub enum Command {
     Exit,
     Clear,
     CreateCollection(String),
+    ListCollections,
+    DeleteCollection(String),
     Error(&'static str),
 }
 
-fn create_collection_subcommand(args: Vec<&str>) -> Result<Command, Error> {
-    let vars: Vec<&str> = vec!["COLLECTION", "collection", "Collection"];
-
-    if args.len() < 3 {
-        return Ok(Command::Error("CREATE: provide collection name"));
+fn collections_subcommand(args: Vec<&str>) -> Result<Command, Error> {
+    if args.len() < 2 {
+        return Ok(Command::Error("Invalid subcommand call"));
     }
 
-    if !vars.contains(&args[1]) {
-        return Ok(Command::Error("CREATE: Invalid command"));
-    }
+    let cmd = &args[1].to_ascii_lowercase()[..];
 
-    let collection_name = args[2].trim().to_lowercase();
-    Ok(Command::CreateCollection(collection_name))
+    match cmd {
+        "list" => {
+            return Ok(Command::ListCollections);
+        }
+        "create" => {
+            if args.len() < 3 {
+                return Ok(Command::Error("collections: provide collection name"));
+            }
+            let collection_name = args[2].trim().to_lowercase();
+            return Ok(Command::CreateCollection(collection_name));
+        }
+        "delete" => {
+            if args.len() < 3 {
+                return Ok(Command::Error("collections: provide collection name"));
+            }
+            let collection_name = args[2].trim().to_lowercase();
+            return Ok(Command::DeleteCollection(collection_name));
+        }
+        _ => {
+            return Ok(Command::Error("collections: subcommand not found."));
+        }
+    }
 }
 
 impl TryFrom<&str> for Command {
@@ -30,12 +48,11 @@ impl TryFrom<&str> for Command {
 
     fn try_from(value: &str) -> Result<Self, Error> {
         let split_value: Vec<&str> = value.split_whitespace().collect();
-        match split_value[0] {
+        let cmd = &split_value[0].to_lowercase()[..];
+        match cmd {
             "exit" => Ok(Command::Exit),
             "clear" => Ok(Command::Clear),
-            "create" => create_collection_subcommand(split_value),
-            "CREATE" => create_collection_subcommand(split_value),
-            "Create" => create_collection_subcommand(split_value),
+            "collections" => collections_subcommand(split_value),
             _ => Ok(Command::Error("Unknown command")),
         }
     }

@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::path::Path;
-use std::str::from_utf8_unchecked;
 
-use anyhow::Result;
-use bson::Document;
+use anyhow::{Result, anyhow};
 
+use crate::db::collections::Collection;
+use crate::document::document::Document;
 use crate::pager::page::Page;
 use crate::pager::pager::Pager;
 
@@ -15,6 +15,13 @@ pub struct Database {
     collection_root_page_id: u64,
 }
 
+#[derive(Debug, Clone)]
+pub struct CollectionInfo {
+    pub name: String,
+    pub root_page: u64,
+    pub document_count: u32,
+}
+
 impl Database {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let mut pager = Pager::open(path)?;
@@ -23,22 +30,94 @@ impl Database {
         let page = pager.read_page(meta.root_page)?;
         let storage = Self::deserialize(&page.data);
 
-        if meta.root_page == 1 {
-            let mut root_page = Page::new(1);
-            root_page.data[0..4].copy_from_slice(&0u32.to_be_bytes());
-            root_page.data[4..12].copy_from_slice(&0u64.to_be_bytes());
-            pager.write_page(&root_page)?;
+        let collection_pages = Collection::load_collection_pages(&mut pager, meta.root_page)?;
+        let views = Collection::fetch_all_collections(&collection_pages)?;
 
-            return Ok(Self {
-                pager,
-                storage: storage,
-                collections,
-                collection_root_page_id: 1,
-            });
+        for view in views {
+            collections.insert(view.name.to_string(), view.root_page);
         }
 
-        Ok(Self { pager, storage })
+        Ok(Self {
+            pager,
+            storage,
+            collections,
+            collection_root_page_id: meta.root_page.into(),
+        })
     }
+
+    pub fn list_collections(&mut self) -> Result<Vec<CollectionInfo>> {
+        let mut list = vec![];
+        for (name, root) in self.collections.iter() {
+            let doc_count = Collection::get_document_count(&mut self.pager, root.to_owned())?;
+            let view = CollectionInfo {
+                document_count: doc_count,
+                name: name.to_string(),
+                root_page: root.to_owned(),
+            };
+            list.push(view);
+        }
+
+        list.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(list)
+    }
+    pub fn create_collection(&mut self, name: &str) -> Result<()> {
+        if self.collections.contains_key(name) {
+            return Err(anyhow!("Collection '{}' already exists", name));
+        }
+        let doc_page_ptr = 4;
+
+        // Sync to physical disk blocks via collection layer
+        Collection::create_collection(
+            &mut self.pager,
+            self.collection_root_page_id,
+            name,
+            doc_page_ptr,
+            &mut 9,
+        )?;
+
+        // Update working memory cache if disk transaction succeeds
+        self.collections.insert(name.to_string(), doc_page_ptr);
+        Ok(())
+    }
+
+    /// Redirects an existing collection lookup key to point to a new root address block
+    pub fn update_collection(&mut self, name: &str, new_collection_root_page: u64) -> Result<()> {
+        if !self.collections.contains_key(name) {
+            return Err(anyhow!("Collection '{}' does not exist", name));
+        }
+
+        // Sync directly down onto targeted disk offsets
+        Collection::update_collection(
+            &mut self.pager,
+            self.collection_root_page_id,
+            name,
+            new_collection_root_page,
+        )?;
+
+        // Sync local memory data trace
+        self.collections
+            .insert(name.to_string(), new_collection_root_page);
+        Ok(())
+    }
+
+    /// Completely removes a collection registration layout out of active systems
+    pub fn delete_collection(&mut self, name: &str) -> Result<()> {
+        if !self.collections.contains_key(name) {
+            return Err(anyhow!("Collection '{}' does not exist", name));
+        }
+
+        // Clean out page segments and shift layout values safely
+        Collection::delete_collection(&mut self.pager, self.collection_root_page_id, name)?;
+
+        // Drop from runtime tracking
+        self.collections.remove(name);
+        Ok(())
+    }
+
+    /// Quick read API to check where a collection's storage tree starts
+    // pub fn get_collection_root(&self, name: &str) -> Option<u64> {
+    //     self.collections.get(name).copied()
+    // }
 
     pub fn set(&mut self, key: impl Into<String>, doc: Document) -> Result<()> {
         self.storage.insert(key.into(), doc);
@@ -56,37 +135,8 @@ impl Database {
         self.persist()
     }
 
-    fn find_collections(&mut self, root: u64) -> Result<()> {
-        let mut cursor = 0;
-
-        // let mut map = HashMap::new();
-        let page = self.pager.read_page(root)?;
-        let num_collections = page.data[0];
-        cursor += 1;
-        // TODO! implement this extension
-        // let next_page = page.data[1];
-        if num_collections == 0 {
-            return Ok(());
-        }
-
-        let mut names = Vec::new();
-        let mut name = Vec::new();
-        while cursor <= page.data.len() {
-            let bit = page.data[cursor];
-            if bit == 0 {
-                names.push(String::from_utf8(name.clone())?);
-                name.clear();
-            }
-
-            name.extend_from_slice(&(page.data[cursor]).to_le_bytes());
-            cursor += 1;
-        }
-
-        Ok(())
-    }
-
     fn persist(&mut self) -> Result<()> {
-        let mut page = Page::new(1);
+        let mut page = Page::new(5);
 
         let bytes = Self::serialize(&self.storage);
 

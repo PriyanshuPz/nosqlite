@@ -1,5 +1,7 @@
 use std::{env, fs};
 
+use anyhow::Context;
+use comfy_table::Table;
 use nosqlite::Database;
 use nosqlite_shell::{cmd::command::Command, errors::CrateResult};
 use rustyline::{DefaultEditor, error::ReadlineError};
@@ -15,7 +17,7 @@ fn main() -> CrateResult<()> {
     let temp_dir = env::temp_dir();
     let history_path = &temp_dir.join(".nosqlite_history").to_path_buf();
 
-    let _ = Database::open(db_path);
+    let mut db = Database::open(db_path)?;
 
     println!(
         r"
@@ -61,8 +63,33 @@ fn main() -> CrateResult<()> {
                         rl.save_history(history_path)?;
                         break;
                     }
+                    Command::ListCollections => {
+                        let collections = db.list_collections()?;
+                        if collections.is_empty() {
+                            println!("No collections found.");
+                        } else {
+                            let mut table = Table::new();
+
+                            table.set_header(vec!["Name", "Root Page", "Document Count"]);
+
+                            for col in collections {
+                                table.add_row(vec![
+                                    col.name,
+                                    col.root_page.to_string(),
+                                    col.document_count.to_string(),
+                                ]);
+                            }
+
+                            println!("{table}");
+                        }
+                    }
                     Command::CreateCollection(name) => {
+                        let _ = db.create_collection(&name)?;
                         println!("Collection {name} created sucessfully.")
+                    }
+                    Command::DeleteCollection(name) => {
+                        let _ = db.delete_collection(&name)?;
+                        println!("Collection {name} deleted sucessfully.")
                     }
                     Command::Error(e) => {
                         eprintln!("nosqlite error: {:?}", e);

@@ -9,3 +9,4 @@ anyhow = "1.0.102"
 clap = "4.6.1"
 tokio = { version = "1.43.0", features = ["full"] }
 rustyline = "18.0.0"
+comfy-table = "7.1"
