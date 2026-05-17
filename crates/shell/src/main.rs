@@ -1,6 +1,5 @@
 use std::{env, fs};
 
-use anyhow::Context;
 use comfy_table::Table;
 use nosqlite::Database;
 use nosqlite_shell::{cmd::command::Command, errors::CrateResult};
@@ -54,7 +53,7 @@ fn main() -> CrateResult<()> {
                     .try_into()
                     .unwrap_or(Command::Error("Invalid Command"));
 
-                match command {
+                let _ = match command {
                     Command::Clear => {
                         let _ = rl.clear_screen();
                     }
@@ -63,38 +62,46 @@ fn main() -> CrateResult<()> {
                         rl.save_history(history_path)?;
                         break;
                     }
-                    Command::ListCollections => {
-                        let collections = db.list_collections()?;
-                        if collections.is_empty() {
-                            println!("No collections found.");
-                        } else {
-                            let mut table = Table::new();
+                    Command::ListCollections => match db.list_collections() {
+                        Ok(collections) => {
+                            if collections.is_empty() {
+                                println!("No collections found.");
+                            } else {
+                                let mut table = Table::new();
 
-                            table.set_header(vec!["Name", "Root Page", "Document Count"]);
+                                table.set_header(vec!["Name", "Root Page", "Document Count"]);
 
-                            for col in collections {
-                                table.add_row(vec![
-                                    col.name,
-                                    col.root_page.to_string(),
-                                    col.document_count.to_string(),
-                                ]);
+                                for col in collections {
+                                    table.add_row(vec![
+                                        col.name,
+                                        col.root_page.to_string(),
+                                        col.document_count.to_string(),
+                                    ]);
+                                }
+
+                                println!("{table}");
                             }
-
-                            println!("{table}");
+                        }
+                        Err(e) => eprintln!("Database error listing collections: {:?}", e),
+                    },
+                    Command::CreateCollection(name) => {
+                        if let Err(e) = db.create_collection(&name) {
+                            eprintln!("{:?}", e);
+                        } else {
+                            println!("Collection {name} created successfully.");
                         }
                     }
-                    Command::CreateCollection(name) => {
-                        let _ = db.create_collection(&name)?;
-                        println!("Collection {name} created sucessfully.")
-                    }
                     Command::DeleteCollection(name) => {
-                        let _ = db.delete_collection(&name)?;
-                        println!("Collection {name} deleted sucessfully.")
+                        if let Err(e) = db.delete_collection(&name) {
+                            eprintln!("{:?}", e);
+                        } else {
+                            println!("Collection {name} deleted successfully.");
+                        }
                     }
                     Command::Error(e) => {
                         eprintln!("nosqlite error: {:?}", e);
                     }
-                }
+                };
             }
             Err(ReadlineError::Interrupted) | Err(ReadlineError::Eof) => {
                 // Handle Ctrl-C or Ctrl-D gracefully
