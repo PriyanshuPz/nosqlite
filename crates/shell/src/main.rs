@@ -2,7 +2,10 @@ use std::{env, fs, path::PathBuf};
 
 use comfy_table::Table;
 
-use nosqlite::{Database, document::document::Document};
+use nosqlite::{
+    Database,
+    document::document::{DocId, Document},
+};
 
 use nosqlite_shell::{cmd::command::Command, errors::CrateResult};
 
@@ -72,8 +75,10 @@ fn execute_command(db: &mut Database, command: Command) -> CrateResult<bool> {
             }
         }
 
-        Command::DeleteDocuments { collection } => {
-            println!("Delete documents not implemented for '{}'.", collection);
+        Command::DeleteDocuments { collection, id } => {
+            let obj_id = DocId::parse_str(&id)?;
+            let _ = db.delete_by_id(&collection[..], obj_id)?;
+            println!("document '{}' deleted successfully for '{}'.",id, collection);
         }
 
         Command::Error(error) => {
@@ -157,12 +162,24 @@ fn main() -> CrateResult<()> {
 
                 rl.add_history_entry(input)?;
 
-                let command: Command = input.try_into()?;
+                let command_result: Result<Command, _> = input.try_into();
 
-                let should_continue = execute_command(&mut db, command)?;
+                match command_result {
+                    Ok(command) => match execute_command(&mut db, command) {
+                        Ok(should_continue) => {
+                            if !should_continue {
+                                break;
+                            }
+                        }
 
-                if !should_continue {
-                    break;
+                        Err(error) => {
+                            eprintln!("nosqlite error: {:?}", error);
+                        }
+                    },
+
+                    Err(error) => {
+                        eprintln!("parse error: {:?}", error);
+                    }
                 }
             }
 

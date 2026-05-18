@@ -13,7 +13,7 @@ pub enum Command {
 
     FindDocuments { collection: String },
 
-    DeleteDocuments { collection: String },
+    DeleteDocuments { collection: String, id: String },
 
     Error(String),
 }
@@ -81,12 +81,13 @@ fn documents_subcommand(input: &str, args: &[&str]) -> Result<Command, Error> {
 
         // documents delete users
         "delete" => {
-            if args.len() < 3 {
-                return Ok(Command::Error("documents delete <collection>".into()));
+            if args.len() < 4 {
+                return Ok(Command::Error("documents delete <collection> <id>".into()));
             }
 
             Ok(Command::DeleteDocuments {
                 collection: args[2].to_string(),
+                id: args[3].to_string(),
             })
         }
 
