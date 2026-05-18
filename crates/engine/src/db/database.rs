@@ -4,12 +4,18 @@ use std::path::Path;
 use anyhow::{Result, anyhow};
 
 use crate::db::collections::Collection;
+use crate::pager::page::{PAGE_HEADER_SIZE, Page, PageType};
 use crate::pager::pager::Pager;
+
+pub const PAGE_TYPE_OFFSET: usize = 0;
+
+pub const COLLECTION_COUNT_OFFSET: usize = PAGE_HEADER_SIZE;
+
+pub const COLLECTION_NEXT_PAGE_OFFSET: usize = PAGE_HEADER_SIZE + 4;
 
 pub struct Database {
     pager: Pager,
     collections: HashMap<String, u64>,
-    collection_root_page_id: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -22,21 +28,16 @@ pub struct CollectionInfo {
 impl Database {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let mut pager = Pager::open(path)?;
-        let meta = pager.check_metadata()?;
         let mut collections = HashMap::new();
 
-        let collection_pages = Collection::load_collection_pages(&mut pager, meta.root_page)?;
+        let collection_pages = Collection::load_collection_pages(&mut pager)?;
         let views = Collection::fetch_all_collections(&collection_pages)?;
 
         for view in views {
             collections.insert(view.name.to_string(), view.root_page);
         }
 
-        Ok(Self {
-            pager,
-            collections,
-            collection_root_page_id: meta.root_page.into(),
-        })
+        Ok(Self { pager, collections })
     }
 
     pub fn list_collections(&mut self) -> Result<Vec<CollectionInfo>> {
@@ -59,20 +60,19 @@ impl Database {
         if self.collections.contains_key(name) {
             return Err(anyhow!("Collection '{}' already exists", name));
         }
-        // TODO: Implement a way to automatically get ptr to empty page.
-        let doc_page_ptr = 4;
 
-        // Sync to physical disk blocks via collection layer
-        Collection::create_collection(
-            &mut self.pager,
-            self.collection_root_page_id,
-            name,
-            doc_page_ptr,
-            &mut 9,
-        )?;
+        let collection_root_page = 0;
+        let mut page = Page::new(collection_root_page);
+        page.set_page_type(PageType::CollectionData);
 
-        // Update working memory cache if disk transaction succeeds
-        self.collections.insert(name.to_string(), doc_page_ptr);
+        page.data[COLLECTION_COUNT_OFFSET..COLLECTION_NEXT_PAGE_OFFSET]
+            .copy_from_slice(&0u32.to_le_bytes());
+        self.pager.write_page(&page)?;
+
+        Collection::create_collection(&mut self.pager, name, collection_root_page)?;
+
+        self.collections
+            .insert(name.to_string(), collection_root_page);
         Ok(())
     }
 
@@ -81,12 +81,7 @@ impl Database {
             return Err(anyhow!("Collection '{}' does not exist", name));
         }
 
-        Collection::update_collection(
-            &mut self.pager,
-            self.collection_root_page_id,
-            name,
-            new_collection_root_page,
-        )?;
+        Collection::update_collection(&mut self.pager, name, new_collection_root_page)?;
 
         self.collections
             .insert(name.to_string(), new_collection_root_page);
@@ -98,7 +93,7 @@ impl Database {
             return Err(anyhow!("Collection '{}' does not exist", name));
         }
 
-        Collection::delete_collection(&mut self.pager, self.collection_root_page_id, name)?;
+        Collection::delete_collection(&mut self.pager, name)?;
 
         self.collections.remove(name);
         Ok(())
