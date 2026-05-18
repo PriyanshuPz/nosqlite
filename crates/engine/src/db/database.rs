@@ -1,101 +1,130 @@
-use std::collections::HashMap;
+use anyhow::{Result, anyhow};
 use std::path::Path;
 
-use anyhow::{Result, anyhow};
+use bson::Document;
 
-use crate::db::collections::Collection;
-use crate::pager::page::{PAGE_HEADER_SIZE, Page, PageType};
-use crate::pager::pager::Pager;
-
-pub const PAGE_TYPE_OFFSET: usize = 0;
-
-pub const COLLECTION_COUNT_OFFSET: usize = PAGE_HEADER_SIZE;
-
-pub const COLLECTION_NEXT_PAGE_OFFSET: usize = PAGE_HEADER_SIZE + 4;
+use crate::{
+    catalog::catalog::{Catalog, CatalogEntry},
+    document::page::DocumentPage,
+    pager::{page::Page, pager::Pager},
+};
 
 pub struct Database {
     pager: Pager,
-    collections: HashMap<String, u64>,
-}
-
-#[derive(Debug, Clone)]
-pub struct CollectionInfo {
-    pub name: String,
-    pub root_page: u64,
-    pub document_count: u32,
 }
 
 impl Database {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        let mut pager = Pager::open(path)?;
-        let mut collections = HashMap::new();
-
-        let collection_pages = Collection::load_collection_pages(&mut pager)?;
-        let views = Collection::fetch_all_collections(&collection_pages)?;
-
-        for view in views {
-            collections.insert(view.name.to_string(), view.root_page);
-        }
-
-        Ok(Self { pager, collections })
+        let pager = Pager::open(path)?;
+        Ok(Self { pager })
     }
 
-    pub fn list_collections(&mut self) -> Result<Vec<CollectionInfo>> {
-        let mut list = vec![];
-        for (name, root) in self.collections.iter() {
-            let doc_count = Collection::get_document_count(&mut self.pager, root.to_owned())?;
-            let view = CollectionInfo {
-                document_count: doc_count,
-                name: name.to_string(),
-                root_page: root.to_owned(),
-            };
-            list.push(view);
-        }
-
-        list.sort_by(|a, b| a.name.cmp(&b.name));
-        Ok(list)
-    }
-
+    // COLLECTION APIs
     pub fn create_collection(&mut self, name: &str) -> Result<()> {
-        if self.collections.contains_key(name) {
-            return Err(anyhow!("Collection '{}' already exists", name));
-        }
-
-        let collection_root_page = 0;
-        let mut page = Page::new(collection_root_page);
-        page.set_page_type(PageType::CollectionData);
-
-        page.data[COLLECTION_COUNT_OFFSET..COLLECTION_NEXT_PAGE_OFFSET]
-            .copy_from_slice(&0u32.to_le_bytes());
-        self.pager.write_page(&page)?;
-
-        Collection::create_collection(&mut self.pager, name, collection_root_page)?;
-
-        self.collections
-            .insert(name.to_string(), collection_root_page);
-        Ok(())
-    }
-
-    pub fn update_collection(&mut self, name: &str, new_collection_root_page: u64) -> Result<()> {
-        if !self.collections.contains_key(name) {
-            return Err(anyhow!("Collection '{}' does not exist", name));
-        }
-
-        Collection::update_collection(&mut self.pager, name, new_collection_root_page)?;
-
-        self.collections
-            .insert(name.to_string(), new_collection_root_page);
-        Ok(())
+        Catalog::create(&mut self.pager, name)
     }
 
     pub fn delete_collection(&mut self, name: &str) -> Result<()> {
-        if !self.collections.contains_key(name) {
-            return Err(anyhow!("Collection '{}' does not exist", name));
+        Catalog::delete(&mut self.pager, name)
+    }
+
+    pub fn list_collections(&mut self) -> Result<Vec<CatalogEntry>> {
+        Catalog::list(&mut self.pager)
+    }
+
+    // DOCUMENT APIs
+    pub fn insert_one(&mut self, collection: &str, document: Document) -> Result<()> {
+        let mut entry = Catalog::find(&mut self.pager, collection)?
+            .ok_or_else(|| anyhow!("collection not found"))?;
+
+        let bson_bytes = bson::serialize_to_vec(&document)?;
+
+        if entry.first_document_page == 0 {
+            let page_id = self.pager.allocate_page()?;
+
+            let mut page = Page::new(page_id);
+
+            DocumentPage::initialize(&mut page);
+            DocumentPage::append_document(&mut page, &bson_bytes)?;
+
+            self.pager.write_page(&page)?;
+
+            entry.first_document_page = page_id;
+
+            entry.document_count = 1;
+
+            Catalog::update(&mut self.pager, &entry)?;
+
+            return Ok(());
         }
 
-        Collection::delete_collection(&mut self.pager, name)?;
+        let mut current_page_id = entry.first_document_page;
 
-        self.collections.remove(name);
-        Ok(())
+        loop {
+            let mut page = self.pager.read_page(current_page_id)?;
+
+            if DocumentPage::remaining_space(&page)? >= bson_bytes.len() {
+                DocumentPage::append_document(&mut page, &bson_bytes)?;
+
+                self.pager.write_page(&page)?;
+
+                entry.document_count += 1;
+
+                Catalog::update(&mut self.pager, &entry)?;
+
+                return Ok(());
+            }
+
+            let next_page = DocumentPage::next_page(&page)?;
+
+            if next_page == 0 {
+                let new_page_id = self.pager.allocate_page()?;
+
+                let mut new_page = Page::new(new_page_id);
+
+                DocumentPage::initialize(&mut new_page);
+
+                DocumentPage::append_document(&mut new_page, &bson_bytes)?;
+
+                DocumentPage::set_next_page(&mut page, new_page_id);
+
+                self.pager.write_page(&page)?;
+
+                self.pager.write_page(&new_page)?;
+
+                entry.document_count += 1;
+
+                Catalog::update(&mut self.pager, &entry)?;
+
+                return Ok(());
+            }
+
+            current_page_id = next_page;
+        }
+    }
+
+    pub fn find_all(&mut self, collection: &str) -> Result<Vec<Document>> {
+        let entry = Catalog::find(&mut self.pager, collection)?
+            .ok_or_else(|| anyhow!("collection not found"))?;
+
+        let mut documents = Vec::new();
+
+        let mut current_page_id = entry.first_document_page;
+
+        while current_page_id != 0 {
+            let page = self.pager.read_page(current_page_id)?;
+
+            let raw_documents = DocumentPage::documents(&page)?;
+
+            for raw in raw_documents {
+                let document: Document = bson::deserialize_from_slice(raw)?;
+
+                documents.push(document);
+            }
+
+            current_page_id = DocumentPage::next_page(&page)?;
+        }
+
+        Ok(documents)
     }
 }

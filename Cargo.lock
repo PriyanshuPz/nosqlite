@@ -517,6 +517,7 @@ dependencies = [
  "comfy-table",
  "nosqlite",
  "rustyline",
+ "serde_json",
  "tokio",
 ]
 

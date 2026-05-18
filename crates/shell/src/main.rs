@@ -1,22 +1,121 @@
-use std::{env, fs};
+use std::{env, fs, path::PathBuf};
 
 use comfy_table::Table;
-use nosqlite::Database;
+
+use nosqlite::{Database, document::document::Document};
+
 use nosqlite_shell::{cmd::command::Command, errors::CrateResult};
+
 use rustyline::{DefaultEditor, error::ReadlineError};
 
-fn main() -> CrateResult<()> {
-    let args: Vec<String> = std::env::args().collect();
-    let mut db_path = &"nosqlite.db".to_string();
-    if args.len() > 2 {
-        db_path = &args[1];
+fn execute_command(db: &mut Database, command: Command) -> CrateResult<bool> {
+    match command {
+        // Exit shell
+        Command::Exit => {
+            println!("Exiting nosqlite...");
+            return Ok(false);
+        }
+
+        // Clear screen
+        Command::Clear => {
+            print!("\x1B[2J\x1B[1;1H");
+        }
+
+        // COLLECTIONS
+        Command::ListCollections => {
+            let collections = db.list_collections()?;
+
+            if collections.is_empty() {
+                println!("No collections found.");
+            } else {
+                let mut table = Table::new();
+
+                table.set_header(vec!["Collection", "Documents"]);
+
+                for collection in collections {
+                    table.add_row(vec![collection.name, collection.document_count.to_string()]);
+                }
+
+                println!("{table}");
+            }
+        }
+
+        Command::CreateCollection(name) => {
+            db.create_collection(&name)?;
+
+            println!("Collection '{}' created.", name);
+        }
+
+        Command::DeleteCollection(name) => {
+            db.delete_collection(&name)?;
+            println!("Collection '{}' deleted.", name);
+        }
+
+        // DOCUMENTS
+        Command::InsertDocument { collection, json } => {
+            let document: Document = serde_json::from_str(&json)?;
+
+            db.insert_one(&collection, document)?;
+
+            println!("Document inserted into '{}'.", collection);
+        }
+
+        Command::FindDocuments { collection } => {
+            let documents = db.find_all(&collection)?;
+
+            if documents.is_empty() {
+                println!("No documents found.");
+            } else {
+                for document in documents {
+                    println!("{}", serde_json::to_string_pretty(&document)?);
+                }
+            }
+        }
+
+        Command::DeleteDocuments { collection } => {
+            println!("Delete documents not implemented for '{}'.", collection);
+        }
+
+        Command::Error(error) => {
+            eprintln!("nosqlite: {}", error);
+        }
     }
 
-    let mut rl = DefaultEditor::new()?;
-    let temp_dir = env::temp_dir();
-    let history_path = &temp_dir.join(".nosqlite_history").to_path_buf();
+    Ok(true)
+}
 
-    let mut db = Database::open(db_path)?;
+fn main() -> CrateResult<()> {
+    let args: Vec<String> = env::args().collect();
+
+    let mut db_path = PathBuf::from("nosqlite.db");
+
+    // Optional: nosqlite --db custom.db
+    if let Some(index) = args.iter().position(|a| a == "--db") {
+        if let Some(path) = args.get(index + 1) {
+            db_path = PathBuf::from(path);
+        }
+    }
+
+    if let Some(parent) = db_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)?;
+        }
+    }
+
+    let mut db = Database::open(&db_path)?;
+
+    // Non-interactive mode: nosqlite --cmd "collections list"
+    if let Some(index) = args.iter().position(|a| a == "--cmd") {
+        let command_input = args
+            .get(index + 1)
+            .ok_or_else(|| anyhow::anyhow!("--cmd requires input"))?;
+
+        let command: Command = command_input.as_str().try_into()?;
+
+        execute_command(&mut db, command)?;
+
+        return Ok(());
+    }
 
     println!(
         r"
@@ -26,22 +125,31 @@ fn main() -> CrateResult<()> {
 ▀▀
 "
     );
-    println!(" Welcome to nosqlite! Type 'exit' to quit.\n");
-    match rl.load_history(history_path) {
+
+    println!("Welcome to nosqlite!\n");
+
+    let mut rl = DefaultEditor::new()?;
+
+    let history_path = env::temp_dir().join(".nosqlite_history");
+
+    match rl.load_history(&history_path) {
         Ok(_) => {}
+
         Err(ReadlineError::Io(_)) => {
-            fs::File::create(history_path)?;
+            fs::File::create(&history_path)?;
         }
-        Err(err) => {
-            eprintln!("nosqlite: Error loading history: {}", err);
+
+        Err(error) => {
+            eprintln!("history error: {}", error);
         }
     }
 
     loop {
         let line = rl.readline("nosqlite > ");
+
         match line {
-            Ok(line) => {
-                let input = line.trim();
+            Ok(input) => {
+                let input = input.trim();
 
                 if input.is_empty() {
                     continue;
@@ -49,72 +157,28 @@ fn main() -> CrateResult<()> {
 
                 rl.add_history_entry(input)?;
 
-                let command: Command = input
-                    .try_into()
-                    .unwrap_or(Command::Error("Invalid Command"));
+                let command: Command = input.try_into()?;
 
-                let _ = match command {
-                    Command::Clear => {
-                        let _ = rl.clear_screen();
-                    }
-                    Command::Exit => {
-                        eprintln!("Exiting nosqlite...");
-                        rl.save_history(history_path)?;
-                        break;
-                    }
-                    Command::ListCollections => match db.list_collections() {
-                        Ok(collections) => {
-                            if collections.is_empty() {
-                                println!("No collections found.");
-                            } else {
-                                let mut table = Table::new();
+                let should_continue = execute_command(&mut db, command)?;
 
-                                table.set_header(vec!["Name", "Root Page", "Document Count"]);
-
-                                for col in collections {
-                                    table.add_row(vec![
-                                        col.name,
-                                        col.root_page.to_string(),
-                                        col.document_count.to_string(),
-                                    ]);
-                                }
-
-                                println!("{table}");
-                            }
-                        }
-                        Err(e) => eprintln!("Database error listing collections: {:?}", e),
-                    },
-                    Command::CreateCollection(name) => {
-                        if let Err(e) = db.create_collection(&name) {
-                            eprintln!("{:?}", e);
-                        } else {
-                            println!("Collection {name} created successfully.");
-                        }
-                    }
-                    Command::DeleteCollection(name) => {
-                        if let Err(e) = db.delete_collection(&name) {
-                            eprintln!("{:?}", e);
-                        } else {
-                            println!("Collection {name} deleted successfully.");
-                        }
-                    }
-                    Command::Error(e) => {
-                        eprintln!("nosqlite error: {:?}", e);
-                    }
-                };
+                if !should_continue {
+                    break;
+                }
             }
+
             Err(ReadlineError::Interrupted) | Err(ReadlineError::Eof) => {
-                // Handle Ctrl-C or Ctrl-D gracefully
                 println!("\nExiting nosqlite...");
+
                 break;
             }
-            Err(e) => {
-                eprintln!("nosqlite error: {:?}", e);
+
+            Err(error) => {
+                eprintln!("shell error: {:?}", error);
             }
         }
     }
 
-    rl.save_history(history_path)?;
+    rl.save_history(&history_path)?;
 
     Ok(())
 }

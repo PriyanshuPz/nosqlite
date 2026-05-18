@@ -1,3 +1,4 @@
+// @depreciated
 use std::ffi::CStr;
 
 use anyhow::{Ok, Result, anyhow};
@@ -72,7 +73,7 @@ impl Collection {
 
     pub fn load_collection_pages(pager: &mut Pager) -> Result<Vec<Page>> {
         let mut pages = Vec::new();
-        let mut current_id: u64 = pager.header.collections_root_page;
+        let mut current_id: u64 = pager.header.catalog_page;
 
         while current_id != 0 {
             let page = pager.read_page(current_id)?;
@@ -97,7 +98,7 @@ impl Collection {
             ));
         }
 
-        let mut current_id = pager.header.collections_root_page;
+        let mut current_id = pager.header.catalog_page;
         let entry_size = name.as_bytes().len() + 1 + 8;
 
         loop {
@@ -168,7 +169,7 @@ impl Collection {
         name: &str,
         new_collection_root_page: u64,
     ) -> Result<()> {
-        let mut current_id = pager.header.collections_root_page;
+        let mut current_id = pager.header.catalog_page;
 
         while current_id != 0 {
             let mut page = pager.read_page(current_id)?;
@@ -204,7 +205,7 @@ impl Collection {
     }
 
     pub fn delete_collection(pager: &mut Pager, name: &str) -> Result<()> {
-        let mut current_id = pager.header.collections_root_page;
+        let mut current_id = pager.header.catalog_page;
 
         while current_id != 0 {
             let mut page = pager.read_page(current_id)?;

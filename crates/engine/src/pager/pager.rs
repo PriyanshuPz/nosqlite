@@ -35,7 +35,7 @@ impl Pager {
     fn initialize_database(file: &mut File) -> Result<FileHeader> {
         let mut header = FileHeader::new();
         header.total_pages = 1;
-        header.collections_root_page = 1;
+        header.catalog_page = 1;
 
         write_header(file, &header)?;
 

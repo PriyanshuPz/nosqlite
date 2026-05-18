@@ -1,45 +1,96 @@
-use anyhow::Ok;
-
 use crate::errors::Error;
 
 #[derive(Clone, Debug)]
 pub enum Command {
     Exit,
     Clear,
-    CreateCollection(String),
+
     ListCollections,
+    CreateCollection(String),
     DeleteCollection(String),
-    Error(&'static str),
+
+    InsertDocument { collection: String, json: String },
+
+    FindDocuments { collection: String },
+
+    DeleteDocuments { collection: String },
+
+    Error(String),
 }
 
-fn collections_subcommand(args: Vec<&str>) -> Result<Command, Error> {
+fn collections_subcommand(args: &[&str]) -> Result<Command, Error> {
     if args.len() < 2 {
-        return Ok(Command::Error("Invalid subcommand call"));
+        return Ok(Command::Error("collections: missing subcommand".into()));
     }
 
-    let cmd = &args[1].to_ascii_lowercase()[..];
+    match args[1] {
+        "list" => Ok(Command::ListCollections),
 
-    match cmd {
-        "list" => {
-            return Ok(Command::ListCollections);
-        }
         "create" => {
             if args.len() < 3 {
-                return Ok(Command::Error("collections: provide collection name"));
+                return Ok(Command::Error("collections create <name>".into()));
             }
-            let collection_name = args[2].trim().to_lowercase();
-            return Ok(Command::CreateCollection(collection_name));
+
+            Ok(Command::CreateCollection(args[2].to_string()))
         }
+
         "delete" => {
             if args.len() < 3 {
-                return Ok(Command::Error("collections: provide collection name"));
+                return Ok(Command::Error("collections delete <name>".into()));
             }
-            let collection_name = args[2].trim().to_lowercase();
-            return Ok(Command::DeleteCollection(collection_name));
+
+            Ok(Command::DeleteCollection(args[2].to_string()))
         }
-        _ => {
-            return Ok(Command::Error("collections: subcommand not found."));
+
+        _ => Ok(Command::Error("unknown collections subcommand".into())),
+    }
+}
+
+fn documents_subcommand(input: &str, args: &[&str]) -> Result<Command, Error> {
+    if args.len() < 2 {
+        return Ok(Command::Error("documents: missing subcommand".into()));
+    }
+
+    match args[1] {
+        // documents insert users {...}
+        "insert" => {
+            if args.len() < 4 {
+                return Ok(Command::Error(
+                    "documents insert <collection> <json>".into(),
+                ));
+            }
+
+            let collection = args[2].to_string();
+            let json_start = input.find(args[3]).unwrap();
+
+            let json = input[json_start..].to_string();
+
+            Ok(Command::InsertDocument { collection, json })
         }
+
+        // documents find users
+        "find" => {
+            if args.len() < 3 {
+                return Ok(Command::Error("documents find <collection>".into()));
+            }
+
+            Ok(Command::FindDocuments {
+                collection: args[2].to_string(),
+            })
+        }
+
+        // documents delete users
+        "delete" => {
+            if args.len() < 3 {
+                return Ok(Command::Error("documents delete <collection>".into()));
+            }
+
+            Ok(Command::DeleteDocuments {
+                collection: args[2].to_string(),
+            })
+        }
+
+        _ => Ok(Command::Error("unknown documents subcommand".into())),
     }
 }
 
@@ -47,13 +98,20 @@ impl TryFrom<&str> for Command {
     type Error = Error;
 
     fn try_from(value: &str) -> Result<Self, Error> {
-        let split_value: Vec<&str> = value.split_whitespace().collect();
-        let cmd = &split_value[0].to_lowercase()[..];
-        match cmd {
+        let trimmed = value.trim();
+
+        if trimmed.is_empty() {
+            return Ok(Command::Error("empty command".into()));
+        }
+
+        let args: Vec<&str> = trimmed.split_whitespace().collect();
+
+        match args[0] {
             "exit" => Ok(Command::Exit),
             "clear" => Ok(Command::Clear),
-            "collections" => collections_subcommand(split_value),
-            _ => Ok(Command::Error("Unknown command")),
+            "collections" => collections_subcommand(&args),
+            "documents" => documents_subcommand(trimmed, &args),
+            _ => Ok(Command::Error("unknown command".into())),
         }
     }
 }
